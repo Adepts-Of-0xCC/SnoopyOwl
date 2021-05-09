@@ -366,16 +366,6 @@ void walkAVL(ULONGLONG VadRoot, ULONGLONG VadCount) {
     ULONGLONG end = 0;
 
     VAD* vadList = NULL;
-
-
-    //Quitar
-    ULONGLONG LogonSessionListCount = 0;
-    ULONGLONG LogonSessionList = 0;
-    ULONGLONG LogonSessionList_offset = 0;
-    ULONGLONG LogonSessionListCount_offset = 0;
-    ULONGLONG iv_offset = 0;
-    ULONGLONG hDes_offset = 0;
-    ULONGLONG hAES_offset = 0;
     
 
     printf("[+] Starting to walk _RTL_AVL_TREE...\n");
