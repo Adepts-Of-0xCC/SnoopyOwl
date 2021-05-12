@@ -1,5 +1,9 @@
 # SnoopyOwl (Proof of Concept)
 
+>Windows 10 2009 20H2 (October 2020 Update)
+
+More info: [A physical graffiti of LSASS: getting credentials from physical memory for fun and learning](https://adepts.of0x.cc/physical-graffiti-lsass/)
+
 # Example:
 Load WinPMem (`winpmem -l`) and execute SnoopyOwl (remember to change the hardcoded PID):
 ```
